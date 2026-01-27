@@ -157,7 +157,6 @@
     "sodium.MixinSodiumBlockOcclusionCache",
     "sodium.MixinSodiumLightDataAccessMixin",
     "truffle.MixinCommonJSRequireBuiltin",
-    "truffle.MixinHostClassDesc",
     "truffle.MixinNpmCompatibleESModuleLoader",
     "truffle.MixinTruffleLanguage"
   ],
