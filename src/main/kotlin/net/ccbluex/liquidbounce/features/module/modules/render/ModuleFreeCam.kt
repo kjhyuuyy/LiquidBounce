@@ -150,7 +150,7 @@ object ModuleFreeCam : ClientModule("FreeCam", ModuleCategories.RENDER, disableO
 
         fun update(velocity: Vec3) = set(pos + velocity)
 
-        fun interpolate(tickDelta: Float) = lastPos.lerp(pos, tickDelta.toDouble())
+        fun interpolate(partialTicks: Float) = lastPos.lerp(pos, partialTicks.toDouble())
     }
 
     override fun onEnabled() {
@@ -253,14 +253,14 @@ object ModuleFreeCam : ClientModule("FreeCam", ModuleCategories.RENDER, disableO
         }
     }
 
-    fun applyCameraPosition(entity: Entity, tickDelta: Float) {
+    fun applyCameraPosition(entity: Entity?, partialTicks: Float) {
         if (!running || entity != player || !PositionState.available) {
             return
         }
 
         val camera = mc.gameRenderer.mainCamera
 
-        return camera.setPosition(PositionState.interpolate(tickDelta))
+        return camera.setPosition(PositionState.interpolate(partialTicks))
     }
 
     fun renderPlayerFromAllPerspectives(entity: LivingEntity): Boolean {
