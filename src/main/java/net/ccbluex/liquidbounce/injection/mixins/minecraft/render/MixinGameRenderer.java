@@ -48,9 +48,11 @@ import net.minecraft.client.renderer.Lightmap;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.fog.FogRenderer;
+import net.minecraft.client.renderer.state.CameraRenderState;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
+import org.objectweb.asm.Opcodes;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -93,12 +95,12 @@ public abstract class MixinGameRenderer {
     /**
      * Hook world render event
      */
-    @Inject(method = "renderLevel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;isSleeping()Z"))
+    @Inject(method = "renderLevel", at = @At(value = "FIELD", target = "Lnet/minecraft/client/renderer/state/CameraEntityRenderState;isSleeping:Z", opcode = Opcodes.GETFIELD))
     public void hookWorldRender(
         DeltaTracker deltaTracker,
         CallbackInfo ci,
-        @Local(ordinal = 0) Matrix4f projectionMatrix,
-        @Local(ordinal = 1) Matrix4f modelViewMatrix
+        @Local(name = "projectionMatrix") Matrix4f projectionMatrix,
+        @Local(name = "modelViewMatrix") Matrix4f modelViewMatrix
     ) {
         WorldToScreen.setMatrices(projectionMatrix, modelViewMatrix);
 
@@ -135,24 +137,24 @@ public abstract class MixinGameRenderer {
     @Inject(method = "render", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/gui/screens/Screen;renderWithTooltipAndSubtitles(Lnet/minecraft/client/gui/GuiGraphics;IIF)V",
             shift = At.Shift.AFTER))
-    public void hookScreenRender(DeltaTracker tickCounter, boolean tick, CallbackInfo ci, @Local GuiGraphics drawContext) {
-        EventManager.INSTANCE.callEvent(new ScreenRenderEvent(drawContext, tickCounter.getGameTimeDeltaPartialTick(false)));
+    public void hookScreenRender(DeltaTracker tickCounter, boolean tick, CallbackInfo ci, @Local(name = "graphics") GuiGraphics graphics) {
+        EventManager.INSTANCE.callEvent(new ScreenRenderEvent(graphics, tickCounter.getGameTimeDeltaPartialTick(false)));
     }
 
     @Inject(method = "bobHurt", at = @At("HEAD"), cancellable = true)
-    private void injectHurtCam(PoseStack matrixStack, float f, CallbackInfo callbackInfo) {
+    private void injectHurtCam(CameraRenderState cameraState, PoseStack poseStack, CallbackInfo ci) {
         if (ModuleNoHurtCam.INSTANCE.getRunning()) {
-            callbackInfo.cancel();
+            ci.cancel();
         }
     }
 
     @Inject(method = "bobView", at = @At("HEAD"), cancellable = true)
-    private void injectBobView(PoseStack matrixStack, float tickProgress, CallbackInfo callbackInfo) {
+    private void injectBobView(CameraRenderState cameraState, PoseStack poseStack, CallbackInfo ci) {
         if (ModuleNoBob.INSTANCE.getRunning() ||
             ModuleTracers.INSTANCE.getRunning() ||
             (ModuleItemESP.INSTANCE.getRunning() && ModuleItemESP.INSTANCE.getShowTracers())) {
 
-            callbackInfo.cancel();
+            ci.cancel();
             return;
         }
 
@@ -168,13 +170,14 @@ public abstract class MixinGameRenderer {
 
         final var state = playerEntity.avatarState();
 
-        float g = state.getBackwardsInterpolatedWalkDistance(tickProgress);
-        float h = state.getInterpolatedBob(tickProgress);
-        matrixStack.translate(Mth.sin(g * Mth.PI) * h * 0.5f, -Math.abs(Mth.cos(g * Mth.PI) * h), 0.0f);
-        matrixStack.mulPose(Axis.ZP.rotationDegrees(Mth.sin(h * Mth.PI) * h * (3.0F + additionalBobbing)));
-        matrixStack.mulPose(Axis.XP.rotationDegrees(Math.abs(Mth.cos(h * Mth.PI - (0.2F + additionalBobbing)) * h) * 5.0F));
+        float partialTicks = 0f; // FIXME: get partialTicks
+        float g = state.getBackwardsInterpolatedWalkDistance(partialTicks);
+        float h = state.getInterpolatedBob(partialTicks);
+        poseStack.translate(Mth.sin(g * Mth.PI) * h * 0.5f, -Math.abs(Mth.cos(g * Mth.PI) * h), 0.0f);
+        poseStack.mulPose(Axis.ZP.rotationDegrees(Mth.sin(h * Mth.PI) * h * (3.0F + additionalBobbing)));
+        poseStack.mulPose(Axis.XP.rotationDegrees(Math.abs(Mth.cos(h * Mth.PI - (0.2F + additionalBobbing)) * h) * 5.0F));
 
-        callbackInfo.cancel();
+        ci.cancel();
     }
 
     @Inject(method = "resize", at = @At("HEAD"))
@@ -186,23 +189,6 @@ public abstract class MixinGameRenderer {
         if (!ModuleAntiBlind.canRender(DoRender.FLOATING_ITEMS)) {
             ci.cancel();
         }
-    }
-
-    @ModifyExpressionValue(method = "getFov", at = @At(value = "INVOKE", target = "Ljava/lang/Integer;intValue()I", remap = false))
-    private int hookGetFov(int original) {
-        int result;
-
-        if (ModuleZoom.INSTANCE.getRunning()) {
-            return ModuleZoom.INSTANCE.getFov(true, 0);
-        } else {
-            result = ModuleZoom.INSTANCE.getFov(false, original);
-        }
-
-        if (ModuleNoFov.INSTANCE.getRunning() && result == original) {
-            return ModuleNoFov.INSTANCE.getFov(result);
-        }
-
-        return result;
     }
 
     @ModifyExpressionValue(method = "renderLevel", at = @At(value = "INVOKE", target = "Ljava/lang/Math;max(FF)F", ordinal = 0, remap = false))
@@ -232,24 +218,6 @@ public abstract class MixinGameRenderer {
     )
     private CameraType hookPerspectiveEventOnHand(CameraType original) {
         return EventManager.INSTANCE.callEvent(new PerspectiveEvent(original)).getPerspective();
-    }
-
-    @ModifyReturnValue(method = "getFov", at = @At("RETURN"))
-    private float injectShit(float original) {
-        var screen = ModuleDroneControl.INSTANCE.getScreen();
-
-        if (screen != null) {
-            return Math.min(120f, original / screen.getZoomFactor());
-        }
-
-        return original;
-    }
-
-    @ModifyArgs(method = "getProjectionMatrix", at = @At(value = "INVOKE", target = "Lorg/joml/Matrix4f;perspective(FFFFZ)Lorg/joml/Matrix4f;", remap = false))
-    private void hookBasicProjectionMatrix(Args args) {
-        if (ModuleAspect.INSTANCE.getRunning()) {
-            args.set(1, (float) args.get(1) / ModuleAspect.getRatioMultiplier());
-        }
     }
 
 }
